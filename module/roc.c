@@ -59,6 +59,8 @@ module_exit(roc_exit);
 
 int roc_init(void)
 {
+    int rc;
+
     // init timer access
     timer_regs = ioremap(TIMER_BASE_ADDR, 0x1000);
     timer_initial_value = timer_last_value = timer_regs[1];
@@ -68,13 +70,19 @@ int roc_init(void)
     // init gpio access
     gpio_regs = ioremap(GPIO_BASE_ADDR, 0x1000);
 
+    // run roc_proc on cpu 3
+    printk("calling run_offline_cpu(3)\n");
+    rc = run_offline_cpu(3, roc_proc);
+    if (rc != 0) {
+        printk("ERROR run_offline_cpu rc=%d\n", rc);
+        iounmap(timer_regs);
+        iounmap(gpio_regs);
+        return rc;
+    }
+
     // create monitor thread, this monitors the progress of roc_proc()
     monitor_thread_id = kthread_create(monitor_thread, NULL, "roc_monitor_thread");
     wake_up_process(monitor_thread_id);
-
-    // run roc_proc on cpu 3
-    printk("calling run_offline_cpu(3)\n");
-    run_offline_cpu(3, roc_proc);
 
     // return success
     printk("roc_init complete\n");

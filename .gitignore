@@ -1,0 +1,8 @@
+*.cmd
+*.o
+*.ko
+Module.symvers
+modules.order
+roc_module.mod
+roc_module.mod.c
+

@@ -1,29 +1,65 @@
 ==================================
-SUMMARY
+KERNEL BUILD & INSTALL PROCEDURE
 ==================================
 
-The smp.c file contained here is from the Raspberry PI OS version 5.10.17-v7l.
+The smp.c file contained here is oringates from the Raspberry PI OS version 5.10.17-v7l;
+and is modified to add the run_offline_cpu API.
+
 Hopefully the smp.c.diff will continue to apply on other versions as well.
 
-After building the kernel (don't install yet), as described below, then:
-- patch -p1 < smp.c.diff
-- make -j4
-- run the Install steps from the instructions attached below
-- add 'maxcpus=N' to /proc/cmdline.txt  (N=3 for Raspberry Pi 4).
-- reboot
+The following instructions are derived from:
+https://www.raspberrypi.org/documentation/linux/kernel/building.md
 
-After reboot, confirm new OS is running by:
-- uname -a
-- cat /proc/kallsyms | grep run_offline_cpu
+  # install tools
+  sudo apt install git bc bison flex libssl-dev make
 
-Next build and run the module.
-View module output in dmesg, or /var/log/messages
+  # clone the kernel
+  git clone --depth=1 https://github.com/raspberrypi/linux
+  cd linux
+
+  # apply the patch to add roc_offline_cpu() to arch/arm/kernel/x86.c
+  patch -p1 < PATHNAME/smp.c.diff
+
+  # make .config and update it
+  KERNEL=kernel7l
+  make bcm2711_defconfig
+  vi .config   # and set 
+     CONFIG_LOCALVERSION="-v7l-MY_CUSTOM_KERNEL"
+     CONFIG_HOTPLUG_CPU=y
+
+  # build
+  make -j4 zImage modules dtbs
+     Answer [N] (the default answer) to the following:
+     Enable CPU hotplug state control (CPU_HOTPLUG_STATE_CONTROL) [N/y/?] (NEW) 
+
+  # install
+  sudo make modules_install
+  sudo cp arch/arm/boot/dts/*.dtb /boot/
+  sudo cp arch/arm/boot/dts/overlays/*.dtb* /boot/overlays/
+  sudo cp arch/arm/boot/dts/overlays/README /boot/overlays/
+  sudo cp arch/arm/boot/zImage /boot/$KERNEL.img
+
+  # change maxcpus, to reserve a cpu
+  vi /boot/cmdline.txt  # add the following, where N=3 for Raspberry Pi 4
+     max_cpus=N
+
+  # reboot
+  reboot
+
+  # after reboot verify new kernel is running
+  uname -a
+  cat /proc/kallsyms | grep run_offline_cpu
+
+  # verify the correct CPU is offline
+  lscpu
+
+Next go to the module directory and build and run the module.
 
 ==================================
-RASPBERRY PI KERNEL BUILD INSTRUCTIONS
+BACKUP INFO - RASPBERRY PI KERNEL BUILD INSTRUCTIONS
 ==================================
 
-Instructions copied below are from:
+Instructions shown below are from:
    https://www.raspberrypi.org/documentation/linux/kernel/building.md
 
 Install build tools
@@ -60,12 +96,10 @@ filename - for instance, kernel-myconfig.img - rather than overwriting the kerne
 You can then edit the config.txt file to select the kernel that the Pi will boot into:
 
 ==================================
-BACKUP INFO - CPU HOTPLUG
+BACKUP INFO - CPU HOTPLUG NOTES
 ==================================
 
 I first investigated CPU Hot Plug, and built a kernel with CONFIG_HOTPLUG_CPU=y. 
-This was interesting, but ultimately I did not make use of cpu hotplug, because it brings
-the CPU into Linux. 
 
 Hot Plug CPU Documentation 
 - Documentation/core-api/cpu_hotplug.rst
