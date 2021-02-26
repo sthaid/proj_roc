@@ -1,0 +1,134 @@
+diff --git a/arch/arm/kernel/smp.c b/arch/arm/kernel/smp.c
+index 48099c6e1..0f1c88ac4 100644
+--- a/arch/arm/kernel/smp.c
++++ b/arch/arm/kernel/smp.c
+@@ -180,6 +180,90 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
+ 	return ret;
+ }
+ 
++// RUN_OFFLINE_CPU - variables
++struct run_offline_cpu_s {
++        volatile bool enabled;
++        void (* volatile proc)(void);
++} roc_array[32];
++struct run_offline_cpu_s *roc_enable_request;
++
++// RUN_OFFLINE_CPU - export API
++int run_offline_cpu(int cpu, void (*proc)(void))
++{
++	int ret;
++        void *stack;
++        struct run_offline_cpu_s *roc = &roc_array[cpu];
++
++        #define STACK_SIZE  65536
++
++        // if a proc is already running on the offline cpu then error
++        if (roc->proc != NULL) {
++                return -EINVAL;
++        }
++
++        // if offline cpu is already enabled to run a proc then
++        // give it the new proc to run, and return
++        if (roc->enabled) {
++                roc->proc = proc;
++                return 0;
++        }
++
++        // enable the offline cpu, and give it the proc to run
++        roc->proc = proc;
++        roc_enable_request = roc;
++
++        // the following code is based on __cpu_up(), contained in this file
++
++	if (!smp_ops.smp_boot_secondary)
++		return -ENOSYS;
++
++	ret = secondary_biglittle_prepare(cpu);
++	if (ret)
++		return ret;
++
++	/*
++	 * We need to tell the secondary core where to find
++	 * its stack and the page tables.
++	 */
++        stack = kzalloc(STACK_SIZE, GFP_KERNEL);
++	secondary_data.stack = stack + STACK_SIZE - 8;
++
++#ifdef CONFIG_ARM_MPU
++	secondary_data.mpu_rgn_info = &mpu_rgn_info;
++#endif
++
++#ifdef CONFIG_MMU
++	secondary_data.pgdir = virt_to_phys(idmap_pgd);
++	secondary_data.swapper_pg_dir = get_arch_pgd(swapper_pg_dir);
++#endif
++	sync_cache_w(&secondary_data);
++
++	/*
++	 * Now bring the CPU into our world.
++	 */
++        // NOTES:
++        // - thiis is calling bcm2836_boot_secondary on RPI 4B
++        // - the call to smp_boot_secondary causes secondary_start_kernel() to be
++        //   called on the desired cpu
++	ret = smp_ops.smp_boot_secondary(cpu, NULL);
++        if (ret == 0) {
++                int count = 0;
++                while (roc->enabled == false && ++count < 10) {
++                        msleep(100);
++                }
++                if (!roc->enabled) {
++			pr_crit("RUN_OFFLINE_CPU%u: failed to come online\n", cpu);
++                        ret = -EIO;
++                }
++        } else {
++		pr_err("RUN_OFFLINE_CPU%u: failed to boot: %d\n", cpu, ret);
++	}
++
++	memset(&secondary_data, 0, sizeof(secondary_data));
++	return ret;
++}
++EXPORT_SYMBOL(run_offline_cpu);
++
+ /* platform specific SMP operations */
+ void __init smp_init_cpus(void)
+ {
+@@ -400,10 +484,12 @@ static void smp_store_cpu_info(unsigned int cpuid)
+  * This is the secondary CPU boot entry.  We're using this CPUs
+  * idle thread stack, but a set of temporary page tables.
+  */
++
+ asmlinkage void secondary_start_kernel(void)
+ {
+ 	struct mm_struct *mm = &init_mm;
+ 	unsigned int cpu;
++        struct run_offline_cpu_s *roc;
+ 
+ 	secondary_biglittle_init();
+ 
+@@ -416,6 +502,25 @@ asmlinkage void secondary_start_kernel(void)
+ 	enter_lazy_tlb(mm, current);
+ 	local_flush_tlb_all();
+ 
++        // RUN_OFFLINE_CPU - If request is active then call roc->proc.
++        //
++        // When bringing up the CPU for a roc_enable_request, other steps
++        // that are normally performed by Linux when bringup up a CPU have been
++        // bypassed. For example percpu memory is not initialized, so a call
++        // to smp_processor_id() will not return the correct value.
++        roc = roc_enable_request;
++        roc_enable_request = NULL;
++        if (roc) {
++                roc->enabled = true;
++                while (true) {
++                        while (roc->proc == NULL) {
++                                ;
++                        }
++                        roc->proc();
++                        roc->proc = NULL;
++                }
++        }
++
+ 	/*
+ 	 * All kernel threads share the same mm context; grab a
+ 	 * reference and switch to it.
