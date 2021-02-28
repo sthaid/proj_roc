@@ -137,12 +137,12 @@ int monitor_thread(void *cx)
 // -----------------  ROC PROC & SUPPORT ROUTINES ----------------------------
 
 // the following code runs on the offline cpu
-// 
-// three test cases are provided
+// - seveal cases are provided
+// - tests are ron on Raspberry Pi 4
 
-#define TEST 2
+#define TEST_CASE 4
 
-#if TEST == 1
+#if TEST_CASE == 1
 // test:   tight loop reading gpio input register
 // result: 37 million reads per sec
 void roc_proc(void)
@@ -167,7 +167,7 @@ void roc_proc(void)
 }
 #endif
 
-#if TEST == 2
+#if TEST_CASE == 2
 // test:   read gpio input register, 
 //         delay to next timer tick,
 //         keep track of the max duration of the gpio read + delay
@@ -201,7 +201,7 @@ void roc_proc(void)
 }
 #endif
 
-#if TEST == 3
+#if TEST_CASE == 3
 // test:   read gpio input register, 
 //         keep track of the max duration of the gpio read
 // result: 4.8 million/sec  max_duration=2 us
@@ -226,6 +226,34 @@ void roc_proc(void)
             if (roc_proc_exit_request) {
                 break;
             }
+        }
+    }
+
+    // ack that this routine is exitting
+    roc_proc_exitted = true;
+}
+#endif
+
+#if TEST_CASE == 4
+// test:   square wave with 2 us period
+// result: good square wave, but there is jitter of about 0.1 us
+void roc_proc(void)
+{
+    // gpio 26 must be pre-setup as an output
+
+    while (true) {
+        // set gpio 26 and delay until the next hardware timer microsec
+        gpio_regs[7] = (1 << 26);
+        roc_delay(0);
+
+        // clear gpio 26 and delay until the next hardware timer microsec
+        gpio_regs[10] = (1 << 26);
+        roc_delay(0);
+
+        // check if time to exit
+        barrier();
+        if (roc_proc_exit_request) {
+            break;
         }
     }
 
