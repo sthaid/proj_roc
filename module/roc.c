@@ -3,6 +3,8 @@
 #include <linux/kthread.h>
 #include <linux/delay.h>
 
+#include "gpio.h"
+
 //
 // defines
 //
@@ -11,7 +13,6 @@
 // typedefs
 //
 
-#define GPIO_BASE_ADDR  (0xfe000000 + 0x200000)
 #define TIMER_BASE_ADDR (0xfe000000 + 0x3000)
 
 //
@@ -21,8 +22,6 @@
 volatile unsigned int *timer_regs;
 unsigned int           timer_initial_value;
 unsigned int           timer_last_value;
-
-volatile unsigned int *gpio_regs;
 
 struct task_struct    *monitor_thread_id;
 
@@ -68,7 +67,7 @@ int roc_init(void)
     printk("timer_initial_value = %d\n", timer_initial_value);
 
     // init gpio access
-    gpio_regs = ioremap(GPIO_BASE_ADDR, 0x1000);
+    gpio_init();
 
     // run roc_proc on cpu 3
     printk("calling run_offline_cpu(3)\n");
@@ -76,7 +75,7 @@ int roc_init(void)
     if (rc != 0) {
         printk("ERROR run_offline_cpu rc=%d\n", rc);
         iounmap(timer_regs);
-        iounmap(gpio_regs);
+        gpio_exit();
         return rc;
     }
 
@@ -103,7 +102,7 @@ void roc_exit(void)
 
     // unmap 
     iounmap(timer_regs);
-    iounmap(gpio_regs);
+    gpio_exit();
 
     // done
     printk("roc_exit complete\n");
@@ -151,7 +150,7 @@ void roc_proc(void)
 
     // only read gpio
     while (true) {
-        gpio_regs[13];
+        gpio_read(26);
 
         if (++i == 0) {
             barrier();
@@ -179,7 +178,7 @@ void roc_proc(void)
 
     time_start = roc_time();
     while (true) {
-        gpio_regs[13];
+        gpio_read(26);
         time_end = roc_delay(0);
 
         if (time_end-time_start > roc_max_duration) {
@@ -212,7 +211,7 @@ void roc_proc(void)
 
     time_start = roc_time();
     while (true) {
-        gpio_regs[13];
+        gpio_read(26);
         time_end = roc_time();
 
         if (time_end-time_start > roc_max_duration) {
@@ -239,15 +238,16 @@ void roc_proc(void)
 // result: good square wave, but there is jitter of about 0.1 us
 void roc_proc(void)
 {
-    // gpio 26 must be pre-setup as an output
+    // configure gpio 26 as an output
+    set_gpio_func(26,FUNC_OUT);
 
     while (true) {
         // set gpio 26 and delay until the next hardware timer microsec
-        gpio_regs[7] = (1 << 26);
+        gpio_write(26,1);
         roc_delay(0);
 
         // clear gpio 26 and delay until the next hardware timer microsec
-        gpio_regs[10] = (1 << 26);
+        gpio_write(26,0);
         roc_delay(0);
 
         // check if time to exit
